@@ -13,7 +13,7 @@ type Detector = {
 declare const FaceDetection: new (config: { locateFile: (file: string) => string }) => Detector
 
 const CDN = `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection@0.4.1646425229/`
-const BLOCK_SIZE = 20  // 항상 최대 모자이크
+const BLOCK_SIZE = 50
 
 type ItemStatus = 'pending' | 'processing' | 'done' | 'error'
 
@@ -64,7 +64,7 @@ async function saveImage(dataUrl: string, fileName: string) {
         return
       }
     } catch (err) {
-      if ((err as Error).name === 'AbortError') return  // 사용자가 취소
+      if ((err as Error).name === 'AbortError') return
     }
   }
   const a = document.createElement('a')
@@ -132,7 +132,7 @@ export default function App() {
       const { xCenter: cx, yCenter: cy, width: nw, height: nh } = d.boundingBox
       const bw = nw * canvas.width
       const bh = nh * canvas.height
-      const pad = 0.15
+      const pad = 0.2
       const x = Math.max(0, cx * canvas.width - bw / 2 - bw * pad)
       const y = Math.max(0, cy * canvas.height - bh / 2 - bh * pad)
       const x2 = Math.min(canvas.width, cx * canvas.width + bw / 2 + bw * pad)
@@ -165,6 +165,39 @@ export default function App() {
   const handleSave = (item: ImageItem) => {
     if (!item.processedUrl) return
     saveImage(item.processedUrl, `${basename(item.file)}_blurred.png`)
+  }
+
+  const handleSaveAll = async () => {
+    const done = items.filter(i => i.processedUrl)
+    if (!done.length) return
+
+    // 모바일: Web Share API로 한 번에 공유
+    if (typeof navigator.canShare === 'function') {
+      try {
+        const files = await Promise.all(
+          done.map(async item => {
+            const res = await fetch(item.processedUrl!)
+            const blob = await res.blob()
+            return new File([blob], `${basename(item.file)}_blurred.png`, { type: 'image/png' })
+          })
+        )
+        if (navigator.canShare({ files })) {
+          await navigator.share({ files, title: '모자이크 처리된 이미지' })
+          return
+        }
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') return
+      }
+    }
+
+    // 데스크탑: 순차 다운로드
+    for (const item of done) {
+      const a = document.createElement('a')
+      a.href = item.processedUrl!
+      a.download = `${basename(item.file)}_blurred.png`
+      a.click()
+      await new Promise(r => setTimeout(r, 300))
+    }
   }
 
   const handleDrop = (e: React.DragEvent) => {
@@ -240,6 +273,13 @@ export default function App() {
                         ? `감지 & 모자이크 처리 (${pendingCount}장)`
                         : '모두 처리됨'}
                 </button>
+                {doneCount > 0 && (
+                  <button className="btn btn-download"
+                    onClick={handleSaveAll}
+                    disabled={isBusy}>
+                    ⬇ 일괄 저장 ({doneCount}장)
+                  </button>
+                )}
               </div>
               <input ref={addMoreRef} type="file" accept="image/*" multiple
                 onChange={e => e.target.files && addFiles(e.target.files)} hidden />

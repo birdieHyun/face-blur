@@ -81,8 +81,8 @@ interface EditModalProps {
 
 function EditModal({ item, onSave, onClose }: EditModalProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const offscreenRef = useRef<HTMLCanvasElement | null>(null)  // 편집 중인 현재 상태
-  const originalRef = useRef<HTMLCanvasElement | null>(null)   // 원본 이미지 (복구용)
+  const offscreenRef = useRef<HTMLCanvasElement | null>(null)
+  const origImgRef = useRef<HTMLImageElement | null>(null)  // 원본 이미지 요소 직접 보관
   const isDrawing = useRef(false)
   const startPos = useRef({ x: 0, y: 0 })
   const historyRef = useRef<ImageData[]>([])
@@ -92,11 +92,16 @@ function EditModal({ item, onSave, onClose }: EditModalProps) {
   useEffect(() => {
     const canvas = canvasRef.current!
     const offscreen = document.createElement('canvas')
-    const original = document.createElement('canvas')
     offscreenRef.current = offscreen
-    originalRef.current = original
 
-    // 처리된 이미지 로드
+    // 원본 이미지 먼저 로드 → 복구 시 직접 drawImage 소스로 사용
+    const orig = new Image()
+    orig.src = item.originalUrl
+    orig.onload = () => {
+      origImgRef.current = orig
+    }
+
+    // 처리된 이미지로 캔버스 초기화
     const processed = new Image()
     processed.src = item.processedUrl ?? item.originalUrl
     processed.onload = () => {
@@ -106,15 +111,6 @@ function EditModal({ item, onSave, onClose }: EditModalProps) {
       offscreen.height = processed.naturalHeight
       offscreen.getContext('2d')!.drawImage(processed, 0, 0)
       canvas.getContext('2d')!.drawImage(processed, 0, 0)
-    }
-
-    // 원본 이미지 별도 로드 (복구용)
-    const orig = new Image()
-    orig.src = item.originalUrl
-    orig.onload = () => {
-      original.width = orig.naturalWidth
-      original.height = orig.naturalHeight
-      original.getContext('2d')!.drawImage(orig, 0, 0)
     }
   }, [item])
 
@@ -177,9 +173,9 @@ function EditModal({ item, onSave, onClose }: EditModalProps) {
 
       if (mode === 'mosaic') {
         applyMosaicToCanvas(ctx, offscreen, x, y, w, h)
-      } else {
-        // 원본 픽셀로 복구
-        ctx.drawImage(originalRef.current!, x, y, w, h, x, y, w, h)
+      } else if (origImgRef.current) {
+        // HTMLImageElement에서 직접 원본 픽셀 복구 — 캔버스 중간 복사 없음
+        ctx.drawImage(origImgRef.current, x, y, w, h, x, y, w, h)
       }
     }
     redraw()

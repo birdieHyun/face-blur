@@ -32,14 +32,27 @@ function applyBlur(
   x: number, y: number, w: number, h: number,
 ) {
   if (w <= 0 || h <= 0) return
-  // 얼굴 크기에 비례한 블러 강도 (최소 20px)
-  const amount = Math.max(20, Math.round(Math.min(w, h) * 0.25))
+
+  // 오프스크린 캔버스에서 블러를 3회 중첩 → 매우 강한 익명화
+  const off = document.createElement('canvas')
+  off.width = Math.ceil(w)
+  off.height = Math.ceil(h)
+  const offCtx = off.getContext('2d')!
+
+  const amount = Math.max(20, Math.round(Math.min(w, h) * 0.5))
+
+  offCtx.drawImage(source, x, y, w, h, 0, 0, w, h)
+  for (let i = 0; i < 5; i++) {
+    offCtx.filter = `blur(${amount}px)`
+    offCtx.drawImage(off, 0, 0)
+  }
+  offCtx.filter = 'none'
+
   ctx.save()
   ctx.beginPath()
   ctx.rect(x, y, w, h)
-  ctx.clip()  // 블러가 얼굴 영역 밖으로 번지지 않도록 클리핑
-  ctx.filter = `blur(${amount}px)`
-  ctx.drawImage(source, x, y, w, h, x, y, w, h)
+  ctx.clip()
+  ctx.drawImage(off, 0, 0, w, h, x, y, w, h)
   ctx.restore()
 }
 

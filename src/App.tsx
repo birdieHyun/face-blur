@@ -13,7 +13,6 @@ type Detector = {
 declare const FaceDetection: new (config: { locateFile: (file: string) => string }) => Detector
 
 const CDN = `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection@0.4.1646425229/`
-const MOSAIC_CELLS = 5  // 얼굴을 항상 5×5 픽셀로 압축 → 크기 무관 최대 강도
 const CONFIDENCE = 0.25
 
 type ItemStatus = 'pending' | 'processing' | 'done' | 'error'
@@ -27,21 +26,21 @@ interface ImageItem {
   faceCount: number
 }
 
-function applyMosaic(
+function applyBlur(
   ctx: CanvasRenderingContext2D,
   source: HTMLImageElement,
   x: number, y: number, w: number, h: number,
 ) {
   if (w <= 0 || h <= 0) return
-  const cols = MOSAIC_CELLS
-  const rows = MOSAIC_CELLS
-  const tiny = document.createElement('canvas')
-  tiny.width = cols
-  tiny.height = rows
-  tiny.getContext('2d')!.drawImage(source, x, y, w, h, 0, 0, cols, rows)
-  ctx.imageSmoothingEnabled = false
-  ctx.drawImage(tiny, 0, 0, cols, rows, x, y, w, h)
-  ctx.imageSmoothingEnabled = true
+  // 얼굴 크기에 비례한 블러 강도 (최소 20px)
+  const amount = Math.max(20, Math.round(Math.min(w, h) * 0.25))
+  ctx.save()
+  ctx.beginPath()
+  ctx.rect(x, y, w, h)
+  ctx.clip()  // 블러가 얼굴 영역 밖으로 번지지 않도록 클리핑
+  ctx.filter = `blur(${amount}px)`
+  ctx.drawImage(source, x, y, w, h, x, y, w, h)
+  ctx.restore()
 }
 
 function makeId() {
@@ -138,7 +137,7 @@ export default function App() {
       const y = Math.max(0, cy * canvas.height - bh / 2 - bh * pad)
       const x2 = Math.min(canvas.width, cx * canvas.width + bw / 2 + bw * pad)
       const y2 = Math.min(canvas.height, cy * canvas.height + bh / 2 + bh * pad)
-      applyMosaic(ctx, img, x, y, x2 - x, y2 - y)
+      applyBlur(ctx, img, x, y, x2 - x, y2 - y)
     }
 
     return { processedUrl: canvas.toDataURL('image/png'), faceCount: detections.length }

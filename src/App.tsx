@@ -15,6 +15,7 @@ declare const FaceDetection: new (config: { locateFile: (file: string) => string
 const CDN = `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection@0.4.1646425229/`
 const CONFIDENCE = 0.25
 const MOSAIC_CELLS = 5
+const MAX_DETECT_DIM = 1280 // 감지용 축소 최대 크기 (아이폰 성능 최적화)
 
 type ItemStatus = 'pending' | 'processing' | 'done' | 'error'
 
@@ -285,29 +286,44 @@ export default function App() {
     img.src = item.originalUrl
     await new Promise<void>((res, rej) => { img.onload = () => res(); img.onerror = rej })
 
-    const canvas = canvasRef.current!
-    canvas.width = img.naturalWidth
-    canvas.height = img.naturalHeight
-    const ctx = canvas.getContext('2d')!
-    ctx.drawImage(img, 0, 0)
+    const origW = img.naturalWidth
+    const origH = img.naturalHeight
+
+    // 얼굴 감지는 축소 캔버스로 (아이폰 대용량 사진 성능 최적화)
+    const scale = Math.min(1, MAX_DETECT_DIM / Math.max(origW, origH))
+    const detectW = Math.round(origW * scale)
+    const detectH = Math.round(origH * scale)
+    const detectCanvas = document.createElement('canvas')
+    detectCanvas.width = detectW
+    detectCanvas.height = detectH
+    detectCanvas.getContext('2d')!.drawImage(img, 0, 0, detectW, detectH)
 
     let detections: Detection[] = []
     det.onResults((r: Results) => { detections = r.detections ?? [] })
-    await det.send({ image: canvas })
+    await det.send({ image: detectCanvas })
+
+    // 모자이크는 원본 해상도 캔버스에 적용
+    // MediaPipe 좌표는 0~1 정규화값이라 스케일 변환 불필요
+    const canvas = canvasRef.current!
+    canvas.width = origW
+    canvas.height = origH
+    const ctx = canvas.getContext('2d')!
+    ctx.drawImage(img, 0, 0)
 
     for (const d of detections) {
       const { xCenter: cx, yCenter: cy, width: nw, height: nh } = d.boundingBox
-      const bw = nw * canvas.width
-      const bh = nh * canvas.height
+      const bw = nw * origW
+      const bh = nh * origH
       const pad = 0.2
-      const x = Math.max(0, cx * canvas.width - bw / 2 - bw * pad)
-      const y = Math.max(0, cy * canvas.height - bh / 2 - bh * pad)
-      const x2 = Math.min(canvas.width, cx * canvas.width + bw / 2 + bw * pad)
-      const y2 = Math.min(canvas.height, cy * canvas.height + bh / 2 + bh * pad)
+      const x = Math.max(0, cx * origW - bw / 2 - bw * pad)
+      const y = Math.max(0, cy * origH - bh / 2 - bh * pad)
+      const x2 = Math.min(origW, cx * origW + bw / 2 + bw * pad)
+      const y2 = Math.min(origH, cy * origH + bh / 2 + bh * pad)
       applyMosaicToCanvas(ctx, img, x, y, x2 - x, y2 - y)
     }
 
-    return { processedUrl: canvas.toDataURL('image/png'), faceCount: detections.length }
+    // JPEG 출력: PNG 대비 인코딩 빠르고 메모리 절약
+    return { processedUrl: canvas.toDataURL('image/jpeg', 0.92), faceCount: detections.length }
   }
 
   const handleProcessAll = async () => {
@@ -324,6 +340,8 @@ export default function App() {
         console.error(err)
         setItems(prev => prev.map(i => i.id === item.id ? { ...i, status: 'error' } : i))
       }
+      // 이미지 간 브라우저 GC 기회 제공 (메모리 압박 완화)
+      await new Promise(r => setTimeout(r, 0))
     }
     setIsProcessing(false)
   }

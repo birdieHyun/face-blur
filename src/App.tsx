@@ -26,42 +26,21 @@ interface ImageItem {
   faceCount: number
 }
 
-function applyBlur(
+const MOSAIC_CELLS = 5
+
+function applyMosaic(
   ctx: CanvasRenderingContext2D,
   source: HTMLImageElement,
   x: number, y: number, w: number, h: number,
 ) {
   if (w <= 0 || h <= 0) return
-
-  const W = Math.ceil(w)
-  const H = Math.ceil(h)
-  const amount = Math.max(20, Math.round(Math.min(w, h) * 0.3))
-
-  // 두 캔버스를 번갈아 사용해야 self-draw 누적 문제 없이 패스가 제대로 적용됨
-  const makeCanvas = () => {
-    const c = document.createElement('canvas')
-    c.width = W
-    c.height = H
-    return c
-  }
-
-  let src = makeCanvas()
-  src.getContext('2d')!.drawImage(source, x, y, w, h, 0, 0, W, H)
-
-  for (let i = 0; i < 5; i++) {
-    const dst = makeCanvas()
-    const dCtx = dst.getContext('2d')!
-    dCtx.filter = `blur(${amount}px)`
-    dCtx.drawImage(src, 0, 0)
-    src = dst
-  }
-
-  ctx.save()
-  ctx.beginPath()
-  ctx.rect(x, y, w, h)
-  ctx.clip()
-  ctx.drawImage(src, 0, 0, W, H, x, y, w, h)
-  ctx.restore()
+  const tiny = document.createElement('canvas')
+  tiny.width = MOSAIC_CELLS
+  tiny.height = MOSAIC_CELLS
+  tiny.getContext('2d')!.drawImage(source, x, y, w, h, 0, 0, MOSAIC_CELLS, MOSAIC_CELLS)
+  ctx.imageSmoothingEnabled = false
+  ctx.drawImage(tiny, 0, 0, MOSAIC_CELLS, MOSAIC_CELLS, x, y, w, h)
+  ctx.imageSmoothingEnabled = true
 }
 
 function makeId() {
@@ -158,7 +137,7 @@ export default function App() {
       const y = Math.max(0, cy * canvas.height - bh / 2 - bh * pad)
       const x2 = Math.min(canvas.width, cx * canvas.width + bw / 2 + bw * pad)
       const y2 = Math.min(canvas.height, cy * canvas.height + bh / 2 + bh * pad)
-      applyBlur(ctx, img, x, y, x2 - x, y2 - y)
+      applyMosaic(ctx, img, x, y, x2 - x, y2 - y)
     }
 
     return { processedUrl: canvas.toDataURL('image/png'), faceCount: detections.length }

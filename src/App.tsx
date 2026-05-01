@@ -33,26 +33,34 @@ function applyBlur(
 ) {
   if (w <= 0 || h <= 0) return
 
-  // 오프스크린 캔버스에서 블러를 3회 중첩 → 매우 강한 익명화
-  const off = document.createElement('canvas')
-  off.width = Math.ceil(w)
-  off.height = Math.ceil(h)
-  const offCtx = off.getContext('2d')!
+  const W = Math.ceil(w)
+  const H = Math.ceil(h)
+  const amount = Math.max(20, Math.round(Math.min(w, h) * 0.3))
 
-  const amount = Math.max(20, Math.round(Math.min(w, h) * 0.5))
-
-  offCtx.drawImage(source, x, y, w, h, 0, 0, w, h)
-  for (let i = 0; i < 5; i++) {
-    offCtx.filter = `blur(${amount}px)`
-    offCtx.drawImage(off, 0, 0)
+  // 두 캔버스를 번갈아 사용해야 self-draw 누적 문제 없이 패스가 제대로 적용됨
+  const makeCanvas = () => {
+    const c = document.createElement('canvas')
+    c.width = W
+    c.height = H
+    return c
   }
-  offCtx.filter = 'none'
+
+  let src = makeCanvas()
+  src.getContext('2d')!.drawImage(source, x, y, w, h, 0, 0, W, H)
+
+  for (let i = 0; i < 5; i++) {
+    const dst = makeCanvas()
+    const dCtx = dst.getContext('2d')!
+    dCtx.filter = `blur(${amount}px)`
+    dCtx.drawImage(src, 0, 0)
+    src = dst
+  }
 
   ctx.save()
   ctx.beginPath()
   ctx.rect(x, y, w, h)
   ctx.clip()
-  ctx.drawImage(off, 0, 0, w, h, x, y, w, h)
+  ctx.drawImage(src, 0, 0, W, H, x, y, w, h)
   ctx.restore()
 }
 

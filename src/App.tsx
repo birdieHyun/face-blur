@@ -14,6 +14,7 @@ declare const FaceDetection: new (config: { locateFile: (file: string) => string
 
 const CDN = `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection@0.4.1646425229/`
 const BLOCK_SIZE = 50
+const CONFIDENCE = 0.25
 
 type ItemStatus = 'pending' | 'processing' | 'done' | 'error'
 
@@ -77,7 +78,7 @@ export default function App() {
   const [items, setItems] = useState<ImageItem[]>([])
   const [isLoadingModel, setIsLoadingModel] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
-  const [confidence, setConfidence] = useState(0.5)
+
   const [isDragging, setIsDragging] = useState(false)
 
   const detectorRef = useRef<Detector | null>(null)
@@ -112,7 +113,7 @@ export default function App() {
 
   const processOne = async (item: ImageItem): Promise<{ processedUrl: string; faceCount: number }> => {
     const det = detectorRef.current!
-    det.setOptions({ model: 'short', minDetectionConfidence: confidence })
+    det.setOptions({ model: 'short', minDetectionConfidence: CONFIDENCE })
 
     const img = new Image()
     img.src = item.originalUrl
@@ -235,19 +236,6 @@ export default function App() {
           </div>
         ) : (
           <div className="workspace">
-            {/* 설정 */}
-            <div className="controls">
-              <div className="control-group">
-                <div className="control-label">
-                  <span>감지 민감도</span>
-                  <span className="control-value">{Math.round(confidence * 100)}%</span>
-                </div>
-                <input type="range" min={0.1} max={0.9} step={0.1} value={confidence}
-                  onChange={e => setConfidence(Number(e.target.value))} disabled={isBusy} />
-                <div className="range-ends"><span>넓게 (많이 감지)</span><span>좁게 (정확히)</span></div>
-              </div>
-            </div>
-
             {/* 툴바 */}
             <div className="toolbar">
               <span className="count-text">

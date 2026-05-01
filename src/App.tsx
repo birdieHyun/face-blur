@@ -81,39 +81,55 @@ interface EditModalProps {
 
 function EditModal({ item, onSave, onClose }: EditModalProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const offscreenRef = useRef<HTMLCanvasElement | null>(null)
+  const offscreenRef = useRef<HTMLCanvasElement | null>(null)  // 편집 중인 현재 상태
+  const originalRef = useRef<HTMLCanvasElement | null>(null)   // 원본 이미지 (복구용)
   const isDrawing = useRef(false)
   const startPos = useRef({ x: 0, y: 0 })
   const historyRef = useRef<ImageData[]>([])
   const [canUndo, setCanUndo] = useState(false)
+  const [mode, setMode] = useState<'mosaic' | 'restore'>('mosaic')
 
   useEffect(() => {
     const canvas = canvasRef.current!
     const offscreen = document.createElement('canvas')
+    const original = document.createElement('canvas')
     offscreenRef.current = offscreen
-    const img = new Image()
-    img.src = item.processedUrl ?? item.originalUrl
-    img.onload = () => {
-      canvas.width = img.naturalWidth
-      canvas.height = img.naturalHeight
-      offscreen.width = img.naturalWidth
-      offscreen.height = img.naturalHeight
-      offscreen.getContext('2d')!.drawImage(img, 0, 0)
-      canvas.getContext('2d')!.drawImage(img, 0, 0)
+    originalRef.current = original
+
+    // 처리된 이미지 로드
+    const processed = new Image()
+    processed.src = item.processedUrl ?? item.originalUrl
+    processed.onload = () => {
+      canvas.width = processed.naturalWidth
+      canvas.height = processed.naturalHeight
+      offscreen.width = processed.naturalWidth
+      offscreen.height = processed.naturalHeight
+      offscreen.getContext('2d')!.drawImage(processed, 0, 0)
+      canvas.getContext('2d')!.drawImage(processed, 0, 0)
+    }
+
+    // 원본 이미지 별도 로드 (복구용)
+    const orig = new Image()
+    orig.src = item.originalUrl
+    orig.onload = () => {
+      original.width = orig.naturalWidth
+      original.height = orig.naturalHeight
+      original.getContext('2d')!.drawImage(orig, 0, 0)
     }
   }, [item])
 
-  const redraw = (sel?: { x: number; y: number; w: number; h: number }) => {
+  const redraw = (sel?: { x: number; y: number; w: number; h: number }, selMode?: 'mosaic' | 'restore') => {
     const canvas = canvasRef.current!
     const ctx = canvas.getContext('2d')!
     ctx.drawImage(offscreenRef.current!, 0, 0)
     if (sel && sel.w > 0 && sel.h > 0) {
+      const isMosaic = (selMode ?? mode) === 'mosaic'
       ctx.save()
-      ctx.strokeStyle = '#ef4444'
+      ctx.strokeStyle = isMosaic ? '#ef4444' : '#10b981'
       ctx.lineWidth = Math.max(2, canvas.width * 0.003)
       ctx.setLineDash([10, 5])
       ctx.strokeRect(sel.x, sel.y, sel.w, sel.h)
-      ctx.fillStyle = 'rgba(239,68,68,0.15)'
+      ctx.fillStyle = isMosaic ? 'rgba(239,68,68,0.15)' : 'rgba(16,185,129,0.15)'
       ctx.fillRect(sel.x, sel.y, sel.w, sel.h)
       ctx.restore()
     }
@@ -158,7 +174,13 @@ function EditModal({ item, onSave, onClose }: EditModalProps) {
       const ctx = offscreen.getContext('2d')!
       historyRef.current.push(ctx.getImageData(0, 0, offscreen.width, offscreen.height))
       setCanUndo(true)
-      applyMosaicToCanvas(ctx, offscreen, x, y, w, h)
+
+      if (mode === 'mosaic') {
+        applyMosaicToCanvas(ctx, offscreen, x, y, w, h)
+      } else {
+        // 원본 픽셀로 복구
+        ctx.drawImage(originalRef.current!, x, y, w, h, x, y, w, h)
+      }
     }
     redraw()
   }
@@ -175,7 +197,18 @@ function EditModal({ item, onSave, onClose }: EditModalProps) {
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
-          <span className="modal-title">드래그로 모자이크 영역 추가</span>
+          <div className="mode-toggle">
+            <button
+              className={`mode-btn${mode === 'mosaic' ? ' active' : ''}`}
+              onClick={() => setMode('mosaic')}>
+              모자이크
+            </button>
+            <button
+              className={`mode-btn${mode === 'restore' ? ' active restore' : ''}`}
+              onClick={() => setMode('restore')}>
+              원본 복구
+            </button>
+          </div>
           <button className="modal-close" onClick={onClose}>✕</button>
         </div>
 

@@ -13,7 +13,7 @@ type Detector = {
 declare const FaceDetection: new (config: { locateFile: (file: string) => string }) => Detector
 
 const CDN = `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection@0.4.1646425229/`
-const BLOCK_SIZE = 50
+const MOSAIC_CELLS = 5  // 얼굴을 항상 5×5 픽셀로 압축 → 크기 무관 최대 강도
 const CONFIDENCE = 0.25
 
 type ItemStatus = 'pending' | 'processing' | 'done' | 'error'
@@ -33,8 +33,8 @@ function applyMosaic(
   x: number, y: number, w: number, h: number,
 ) {
   if (w <= 0 || h <= 0) return
-  const cols = Math.max(1, Math.round(w / BLOCK_SIZE))
-  const rows = Math.max(1, Math.round(h / BLOCK_SIZE))
+  const cols = MOSAIC_CELLS
+  const rows = MOSAIC_CELLS
   const tiny = document.createElement('canvas')
   tiny.width = cols
   tiny.height = rows

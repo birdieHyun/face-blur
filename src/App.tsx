@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import type { Results, Detection } from '@mediapipe/face_detection'
 import './App.css'
 
@@ -14,6 +14,7 @@ declare const FaceDetection: new (config: { locateFile: (file: string) => string
 
 const CDN = `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection@0.4.1646425229/`
 const CONFIDENCE = 0.25
+const MOSAIC_CELLS = 5
 
 type ItemStatus = 'pending' | 'processing' | 'done' | 'error'
 
@@ -26,14 +27,12 @@ interface ImageItem {
   faceCount: number
 }
 
-const MOSAIC_CELLS = 5
-
-function applyMosaic(
+function applyMosaicToCanvas(
   ctx: CanvasRenderingContext2D,
-  source: HTMLImageElement,
+  source: HTMLCanvasElement | HTMLImageElement,
   x: number, y: number, w: number, h: number,
 ) {
-  if (w <= 0 || h <= 0) return
+  if (w < 2 || h < 2) return
   const tiny = document.createElement('canvas')
   tiny.width = MOSAIC_CELLS
   tiny.height = MOSAIC_CELLS
@@ -52,7 +51,6 @@ function basename(file: File) {
   return dot > 0 ? file.name.slice(0, dot) : file.name
 }
 
-// Web Share API로 저장 (모바일), 불가능하면 a[download] 폴백
 async function saveImage(dataUrl: string, fileName: string) {
   if (typeof navigator.canShare === 'function') {
     try {
@@ -73,12 +71,149 @@ async function saveImage(dataUrl: string, fileName: string) {
   a.click()
 }
 
+// ── 수동 편집 모달 ──────────────────────────────────────────
+
+interface EditModalProps {
+  item: ImageItem
+  onSave: (newUrl: string) => void
+  onClose: () => void
+}
+
+function EditModal({ item, onSave, onClose }: EditModalProps) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const offscreenRef = useRef<HTMLCanvasElement | null>(null)
+  const isDrawing = useRef(false)
+  const startPos = useRef({ x: 0, y: 0 })
+  const historyRef = useRef<ImageData[]>([])
+  const [canUndo, setCanUndo] = useState(false)
+
+  useEffect(() => {
+    const canvas = canvasRef.current!
+    const offscreen = document.createElement('canvas')
+    offscreenRef.current = offscreen
+    const img = new Image()
+    img.src = item.processedUrl ?? item.originalUrl
+    img.onload = () => {
+      canvas.width = img.naturalWidth
+      canvas.height = img.naturalHeight
+      offscreen.width = img.naturalWidth
+      offscreen.height = img.naturalHeight
+      offscreen.getContext('2d')!.drawImage(img, 0, 0)
+      canvas.getContext('2d')!.drawImage(img, 0, 0)
+    }
+  }, [item])
+
+  const redraw = (sel?: { x: number; y: number; w: number; h: number }) => {
+    const canvas = canvasRef.current!
+    const ctx = canvas.getContext('2d')!
+    ctx.drawImage(offscreenRef.current!, 0, 0)
+    if (sel && sel.w > 0 && sel.h > 0) {
+      ctx.save()
+      ctx.strokeStyle = '#ef4444'
+      ctx.lineWidth = Math.max(2, canvas.width * 0.003)
+      ctx.setLineDash([10, 5])
+      ctx.strokeRect(sel.x, sel.y, sel.w, sel.h)
+      ctx.fillStyle = 'rgba(239,68,68,0.15)'
+      ctx.fillRect(sel.x, sel.y, sel.w, sel.h)
+      ctx.restore()
+    }
+  }
+
+  const toCanvasXY = (clientX: number, clientY: number) => {
+    const canvas = canvasRef.current!
+    const rect = canvas.getBoundingClientRect()
+    return {
+      x: (clientX - rect.left) * (canvas.width / rect.width),
+      y: (clientY - rect.top) * (canvas.height / rect.height),
+    }
+  }
+
+  const onStart = (clientX: number, clientY: number) => {
+    startPos.current = toCanvasXY(clientX, clientY)
+    isDrawing.current = true
+  }
+
+  const onMove = (clientX: number, clientY: number) => {
+    if (!isDrawing.current) return
+    const pos = toCanvasXY(clientX, clientY)
+    redraw({
+      x: Math.min(startPos.current.x, pos.x),
+      y: Math.min(startPos.current.y, pos.y),
+      w: Math.abs(pos.x - startPos.current.x),
+      h: Math.abs(pos.y - startPos.current.y),
+    })
+  }
+
+  const onEnd = (clientX: number, clientY: number) => {
+    if (!isDrawing.current) return
+    isDrawing.current = false
+    const pos = toCanvasXY(clientX, clientY)
+    const x = Math.min(startPos.current.x, pos.x)
+    const y = Math.min(startPos.current.y, pos.y)
+    const w = Math.abs(pos.x - startPos.current.x)
+    const h = Math.abs(pos.y - startPos.current.y)
+
+    if (w >= 2 && h >= 2) {
+      const offscreen = offscreenRef.current!
+      const ctx = offscreen.getContext('2d')!
+      historyRef.current.push(ctx.getImageData(0, 0, offscreen.width, offscreen.height))
+      setCanUndo(true)
+      applyMosaicToCanvas(ctx, offscreen, x, y, w, h)
+    }
+    redraw()
+  }
+
+  const handleUndo = () => {
+    if (!historyRef.current.length) return
+    const offscreen = offscreenRef.current!
+    offscreen.getContext('2d')!.putImageData(historyRef.current.pop()!, 0, 0)
+    setCanUndo(historyRef.current.length > 0)
+    redraw()
+  }
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()}>
+        <div className="modal-header">
+          <span className="modal-title">드래그로 모자이크 영역 추가</span>
+          <button className="modal-close" onClick={onClose}>✕</button>
+        </div>
+
+        <div className="modal-body">
+          <canvas
+            ref={canvasRef}
+            className="editor-canvas"
+            onMouseDown={e => onStart(e.clientX, e.clientY)}
+            onMouseMove={e => onMove(e.clientX, e.clientY)}
+            onMouseUp={e => onEnd(e.clientX, e.clientY)}
+            onMouseLeave={e => { if (isDrawing.current) onEnd(e.clientX, e.clientY) }}
+            onTouchStart={e => { e.preventDefault(); onStart(e.touches[0].clientX, e.touches[0].clientY) }}
+            onTouchMove={e => { e.preventDefault(); onMove(e.touches[0].clientX, e.touches[0].clientY) }}
+            onTouchEnd={e => { e.preventDefault(); onEnd(e.changedTouches[0].clientX, e.changedTouches[0].clientY) }}
+          />
+        </div>
+
+        <div className="modal-footer">
+          <button className="btn btn-ghost" onClick={handleUndo} disabled={!canUndo}>
+            ↩ 되돌리기
+          </button>
+          <button className="btn btn-primary" onClick={() => onSave(canvasRef.current!.toDataURL('image/png'))}>
+            저장
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── 메인 앱 ─────────────────────────────────────────────────
+
 export default function App() {
   const [items, setItems] = useState<ImageItem[]>([])
   const [isLoadingModel, setIsLoadingModel] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
-
   const [isDragging, setIsDragging] = useState(false)
+  const [editItem, setEditItem] = useState<ImageItem | null>(null)
 
   const detectorRef = useRef<Detector | null>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -137,7 +272,7 @@ export default function App() {
       const y = Math.max(0, cy * canvas.height - bh / 2 - bh * pad)
       const x2 = Math.min(canvas.width, cx * canvas.width + bw / 2 + bw * pad)
       const y2 = Math.min(canvas.height, cy * canvas.height + bh / 2 + bh * pad)
-      applyMosaic(ctx, img, x, y, x2 - x, y2 - y)
+      applyMosaicToCanvas(ctx, img, x, y, x2 - x, y2 - y)
     }
 
     return { processedUrl: canvas.toDataURL('image/png'), faceCount: detections.length }
@@ -148,7 +283,6 @@ export default function App() {
     if (!queue.length) return
     setIsProcessing(true)
     await getDetector()
-
     for (const item of queue) {
       setItems(prev => prev.map(i => i.id === item.id ? { ...i, status: 'processing' } : i))
       try {
@@ -170,8 +304,6 @@ export default function App() {
   const handleSaveAll = async () => {
     const done = items.filter(i => i.processedUrl)
     if (!done.length) return
-
-    // 모바일: Web Share API로 한 번에 공유
     if (typeof navigator.canShare === 'function') {
       try {
         const files = await Promise.all(
@@ -189,8 +321,6 @@ export default function App() {
         if ((err as Error).name === 'AbortError') return
       }
     }
-
-    // 데스크탑: 순차 다운로드
     for (const item of done) {
       const a = document.createElement('a')
       a.href = item.processedUrl!
@@ -198,6 +328,11 @@ export default function App() {
       a.click()
       await new Promise(r => setTimeout(r, 300))
     }
+  }
+
+  const handleEditSave = (id: string, newUrl: string) => {
+    setItems(prev => prev.map(i => i.id === id ? { ...i, processedUrl: newUrl } : i))
+    setEditItem(null)
   }
 
   const handleDrop = (e: React.DragEvent) => {
@@ -235,7 +370,6 @@ export default function App() {
           </div>
         ) : (
           <div className="workspace">
-            {/* 툴바 */}
             <div className="toolbar">
               <span className="count-text">
                 {items.length}장
@@ -243,27 +377,18 @@ export default function App() {
               </span>
               <div className="toolbar-actions">
                 <button className="btn btn-ghost btn-sm"
-                  onClick={() => addMoreRef.current?.click()} disabled={isBusy}>
-                  + 추가
-                </button>
+                  onClick={() => addMoreRef.current?.click()} disabled={isBusy}>+ 추가</button>
                 <button className="btn btn-ghost btn-sm"
-                  onClick={() => setItems([])} disabled={isBusy}>
-                  전체 삭제
-                </button>
+                  onClick={() => setItems([])} disabled={isBusy}>전체 삭제</button>
                 <button className="btn btn-primary"
-                  onClick={handleProcessAll}
-                  disabled={isBusy || pendingCount === 0}>
+                  onClick={handleProcessAll} disabled={isBusy || pendingCount === 0}>
                   {isLoadingModel ? '모델 로딩 중...'
-                    : isProcessing
-                      ? `처리 중 ${processingItem + 1}/${items.length}`
-                      : pendingCount > 0
-                        ? `감지 & 모자이크 처리 (${pendingCount}장)`
-                        : '모두 처리됨'}
+                    : isProcessing ? `처리 중 ${processingItem + 1}/${items.length}`
+                    : pendingCount > 0 ? `감지 & 모자이크 처리 (${pendingCount}장)`
+                    : '모두 처리됨'}
                 </button>
                 {doneCount > 0 && (
-                  <button className="btn btn-download"
-                    onClick={handleSaveAll}
-                    disabled={isBusy}>
+                  <button className="btn btn-download" onClick={handleSaveAll} disabled={isBusy}>
                     ⬇ 일괄 저장 ({doneCount}장)
                   </button>
                 )}
@@ -279,20 +404,14 @@ export default function App() {
               </div>
             )}
 
-            {/* 이미지 그리드 */}
             <div className="grid">
               {items.map(item => (
                 <div key={item.id} className={`card card-${item.status}`}>
                   <div className="card-thumb">
-                    <img
-                      src={item.processedUrl ?? item.originalUrl}
-                      alt={item.file.name}
-                      className="card-img"
-                    />
+                    <img src={item.processedUrl ?? item.originalUrl}
+                      alt={item.file.name} className="card-img" />
                     {item.status === 'processing' && (
-                      <div className="card-overlay">
-                        <span className="spinner spinner-lg" />
-                      </div>
+                      <div className="card-overlay"><span className="spinner spinner-lg" /></div>
                     )}
                     <button className="card-remove"
                       onClick={() => setItems(prev => prev.filter(i => i.id !== item.id))}
@@ -310,9 +429,13 @@ export default function App() {
                         {item.status === 'error' && '⚠ 오류'}
                       </span>
                       {item.status === 'done' && (
-                        <button className="btn-save" onClick={() => handleSave(item)}>
-                          저장하기
-                        </button>
+                        <div className="card-actions">
+                          <button className="btn-edit" onClick={() => setEditItem(item)}
+                            title="직접 편집">✏️</button>
+                          <button className="btn-save" onClick={() => handleSave(item)}>
+                            저장하기
+                          </button>
+                        </div>
                       )}
                     </div>
                   </div>
@@ -328,6 +451,14 @@ export default function App() {
       </footer>
 
       <canvas ref={canvasRef} hidden />
+
+      {editItem && (
+        <EditModal
+          item={editItem}
+          onSave={url => handleEditSave(editItem.id, url)}
+          onClose={() => setEditItem(null)}
+        />
+      )}
     </div>
   )
 }

@@ -3,12 +3,14 @@ import type { Results, Detection } from '@mediapipe/face_detection'
 import './App.css'
 
 // Loaded via CDN <script> in index.html
-declare const FaceDetection: new (config: { locateFile: (file: string) => string }) => {
+type Detector = {
   setOptions(opts: { model?: string; minDetectionConfidence?: number }): void
   onResults(cb: (results: Results) => void): void
   initialize(): Promise<void>
   send(inputs: { image: HTMLCanvasElement | HTMLImageElement }): Promise<void>
 }
+
+declare const FaceDetection: new (config: { locateFile: (file: string) => string }) => Detector
 
 const CDN = `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection@0.4.1646425229/`
 const BLOCK_SIZE = 20  // 항상 최대 모자이크
@@ -78,7 +80,7 @@ export default function App() {
   const [confidence, setConfidence] = useState(0.5)
   const [isDragging, setIsDragging] = useState(false)
 
-  const detectorRef = useRef<ReturnType<typeof FaceDetection> | null>(null)
+  const detectorRef = useRef<Detector | null>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const addMoreRef = useRef<HTMLInputElement>(null)

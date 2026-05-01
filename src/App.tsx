@@ -197,19 +197,22 @@ function EditModal({ item, onSave, onClose }: EditModalProps) {
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
+          <div className="modal-header-top">
+            <span className="modal-title">드래그로 영역 선택</span>
+            <button className="modal-close" onClick={onClose}>✕</button>
+          </div>
           <div className="mode-toggle">
             <button
               className={`mode-btn${mode === 'mosaic' ? ' active' : ''}`}
               onClick={() => setMode('mosaic')}>
-              모자이크
+              ✦ 모자이크
             </button>
             <button
               className={`mode-btn${mode === 'restore' ? ' active restore' : ''}`}
               onClick={() => setMode('restore')}>
-              원본 복구
+              ↩ 원본 복구
             </button>
           </div>
-          <button className="modal-close" onClick={onClose}>✕</button>
         </div>
 
         <div className="modal-body">
